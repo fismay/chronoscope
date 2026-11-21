@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chronoscope — жестовой инструмент</title>
+<style>
+  :root {
+    --bg: #04060b;
+    --ink: #eef4fb;
+    --ink-dim: rgba(168, 196, 224, 0.72);
+    --ink-faint: rgba(140, 170, 200, 0.42);
+    --accent: #86f5dd;
+    --accent-dim: rgba(134, 245, 221, 0.55);
+    --line: rgba(170, 205, 235, 0.16);
+    --panel: rgba(7, 12, 20, 0.58);
+    --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", sans-serif;
+    --serif: "New York", Georgia, "Times New Roman", serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg); }
+  body { font-family: var(--sans); -webkit-font-smoothing: antialiased; }
+
+  #scene { position: fixed; inset: 0; width: 100%; height: 100%; }
+
+  /* ── рамка-видоискатель ── */
+  .corner {
+    position: fixed; width: 20px; height: 20px; z-index: 5; pointer-events: none;
+    border: 0 solid rgba(170, 205, 235, 0.35); opacity: .8;
+  }
+  .corner.tl { top: 14px; left: 14px; border-top-width: 1px; border-left-width: 1px; }
+  .corner.tr { top: 14px; right: 14px; border-top-width: 1px; border-right-width: 1px; }
+  .corner.bl { bottom: 14px; left: 14px; border-bottom-width: 1px; border-left-width: 1px; }
+  .corner.br { bottom: 14px; right: 14px; border-bottom-width: 1px; border-right-width: 1px; }
+
+  /* виньетка + градиент под надписи */
+  #shade {
+    position: fixed; inset: 0; z-index: 4; pointer-events: none;
+    background:
+      radial-gradient(ellipse 130% 110% at 50% 45%, transparent 58%, rgba(0, 0, 4, 0.5) 100%),
+      linear-gradient(rgba(0, 0, 6, 0.5), transparent 18%, transparent 82%, rgba(0, 0, 6, 0.55));
+  }
+
+  /* ── шапка: логотип слева, статус справа ── */
+  header {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+    display: flex; justify-content: space-between; align-items: flex-start;
+    padding: 26px 30px 0; pointer-events: none;
+  }
+  .brand { user-select: none; }
+  .brand-name {
+    font-family: var(--serif); font-style: italic; font-weight: 400;
+    font-size: 21px; letter-spacing: 0.02em; color: var(--ink);
+  }
+  .brand-sub {
+    margin-top: 5px; font-family: var(--mono); font-size: 8.5px; font-weight: 500;
+    letter-spacing: 0.34em; text-transform: uppercase; color: var(--ink-faint);
+  }
+  .status { display: flex; gap: 22px; user-select: none; padding-top: 4px; }
+  .st { display: flex; align-items: center; gap: 7px; }
+  .st .dot {
+    width: 5px; height: 5px; border-radius: 50%;
+    background: rgba(140, 170, 200, 0.3); transition: background .3s, box-shadow .3s;
+  }
+  .st .lbl {
+    font-family: var(--mono); font-size: 9px; font-weight: 500;
+    letter-spacing: 0.22em; text-transform: uppercase; color: var(--ink-faint);
+    transition: color .3s;
+  }
+  .st.on .dot { background: var(--accent); box-shadow: 0 0 8px var(--accent-dim); }
+  .st.on .lbl { color: var(--ink-dim); }
+  #st-fps { min-width: 52px; justify-content: flex-end; }
+
+  /* ── легенда жестов ── */
+  #legend {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 6px; z-index: 10; pointer-events: none;
+    max-width: 96vw; flex-wrap: wrap; justify-content: center;
+  }
+  .hint {
+    display: flex; align-items: center; gap: 9px;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 8px; padding: 7px 12px 7px 7px;
+    backdrop-filter: blur(10px);
+    transition: border-color .3s, box-shadow .3s, transform .3s;
+    user-select: none;
+  }
+  .hint .key {
+    width: 24px; height: 24px; border-radius: 5px;
+    display: flex; align-items: center; justify-content: center;
+    border: 1px solid rgba(200, 225, 250, 0.22);
+    background: rgba(255, 255, 255, 0.04);
+    font-family: var(--mono); font-size: 11.5px; font-weight: 600;
+    color: rgba(220, 238, 255, 0.9);
+  }
+  .hint .lbl {
+    font-size: 11.5px; letter-spacing: 0.05em; color: var(--ink-dim);
+    transition: color .3s;
+  }
+  .hint.active {
+    border-color: var(--accent-dim);
+    box-shadow: 0 0 16px rgba(134, 245, 221, 0.22), inset 0 0 10px rgba(134, 245, 221, 0.06);
+    transform: translateY(-1px);
+  }
+  .hint.active .lbl { color: var(--ink); }
+  .hint.active .key {
+    border-color: var(--accent-dim); color: var(--accent);
+    box-shadow: 0 0 8px rgba(134, 245, 221, 0.25);
+  }
+
+  /* ── экран загрузки ── */
+  #overlay {
+    position: fixed; inset: 0; z-index: 20;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 26px;
+    background: var(--bg);
+    transition: opacity .8s ease;
+  }
+  #overlay.hidden { opacity: 0; pointer-events: none; }
+  #overlay .brand-name { font-size: 30px; }
+  .loader { width: 180px; height: 1px; background: rgba(170, 205, 235, 0.14); overflow: hidden; }
+  .loader i {
+    display: block; width: 40%; height: 100%; background: var(--accent);
+    animation: slide 1.2s ease-in-out infinite;
+  }
+  @keyframes slide {
+    0% { transform: translateX(-110%); } 100% { transform: translateX(280%); }
+  }
+  #status {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.24em;
+    text-transform: uppercase; color: var(--ink-faint); text-align: center;
+    max-width: 80vw; line-height: 2;
+  }
+  #status .err { color: #ff9a8a; }
+</style>
+</head>
+<body>
+
+<canvas id="scene"></canvas>
+
+<div id="shade"></div>
+<div class="corner tl"></div><div class="corner tr"></div>
+<div class="corner bl"></div><div class="corner br"></div>
+
+<header>
+  <div class="brand">
+    <div class="brand-name">Chronoscope</div>
+    <div class="brand-sub">жестовой инструмент · камера</div>
+  </div>
+  <div class="status">
+    <div class="st" id="st-cam"><span class="dot"></span><span class="lbl">камера</span></div>
+    <div class="st" id="st-hand"><span class="dot"></span><span class="lbl">рука</span></div>
+    <div class="st" id="st-fps"><span class="lbl">— fps</span></div>
+  </div>
+</header>
+
+<div id="legend">
+  <div class="hint" id="hint-invert"><span class="key">2</span><span class="lbl">волна инверсии</span></div>
+  <div class="hint" id="hint-field"><span class="key">3</span><span class="lbl">хронозона</span></div>
+  <div class="hint" id="hint-hole"><span class="key">🤏</span><span class="lbl">чёрная дыра</span></div>
+  <div class="hint" id="hint-fist"><span class="key">✊</span><span class="lbl">сброс</span></div>
+  <div class="hint" id="hint-lens"><span class="key">🖐</span><span class="lbl">пси-линза · левая</span></div>
+</div>
+
+<div id="overlay">
+  <div class="brand-name">Chronoscope</div>
+  <div class="loader"><i></i></div>
+  <div id="status">Запрашиваю камеру…</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
